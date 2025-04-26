@@ -1,11 +1,12 @@
 [org 0x0100]
 jmp start
 
-; Snake structure (3 segments)
-segment_rows: db 10, 10, 10  ; Initial positions
-segment_cols: db 10, 9, 8    ; Horizontal line
-direction: db 3              ; Start moving right (3
+; Snake data structure
+segment_rows: db 10, 10, 10
+segment_cols: db 10, 9, 8
+direction: db 3              ; Start moving right
 new_direction: db 3
+vertical_delay_counter: db 0 ; Additional counter for vertical moves
 
 clrscr:
     push es
@@ -24,17 +25,39 @@ nextloc:
     pop es
     ret
 
+
 delay:
     push cx
     push dx
+    
+    ; Different delays for horizontal vs vertical movement
+    mov al, [direction]
+    cmp al, 0          ; Up
+    je vertical_move
+    cmp al, 1          ; Down
+    je vertical_move
+    
+    ; Horizontal movement (normal speed)
     mov cx, 0x000F
+    jmp delay_loop
+    
+vertical_move:
+    ; Vertical movement (slower - only move every 2nd frame)
+    inc byte [vertical_delay_counter]
+    test byte [vertical_delay_counter], 1
+    jnz skip_move      ; Skip every other frame
+    
+    mov cx, 0x0025     ; Same delay as horizontal
+    
 delay_loop:
-    mov dx, 0x0ffF
+    mov dx, 0x0FFF
 delay_inner:
     dec dx
     jnz delay_inner
     dec cx
     jnz delay_loop
+    
+skip_move:
     pop dx
     pop cx
     ret
