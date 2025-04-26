@@ -4,7 +4,7 @@ jmp start
 ; Snake structure (3 segments)
 segment_rows: db 10, 10, 10  ; Initial positions
 segment_cols: db 10, 9, 8    ; Horizontal line
-direction: db 3              ; Start moving right (3)
+direction: db 3              ; Start moving right (3
 new_direction: db 3
 
 clrscr:
