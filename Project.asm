@@ -13,7 +13,7 @@ score: dw 0
 game_over: db 0
 paused: db 0
 speed: dw 0xBFFF
-last_second: db 0
+food_eaten: db 0
 
 ; Data
 score_label db 'Score: '
@@ -51,7 +51,7 @@ clrscr:
     mov ax, 0xb800
     mov es, ax
     xor di, di
-    
+
 nextloc:
     mov word [es:di], 0x0720
     add di, 2
@@ -60,6 +60,56 @@ nextloc:
     pop di
     pop ax
     pop es
+    ret
+
+clear_play_area:
+    pusha
+    mov ax, 0xb800
+    mov es, ax
+
+    mov dh, BOUNDARY_TOP + 1
+clear_row_loop:
+    cmp dh, BOUNDARY_BOTTOM
+    jge clear_done
+
+    mov dl, BOUNDARY_LEFT + 1
+    
+clear_col_loop:
+    cmp dl, BOUNDARY_RIGHT
+    jge next_row
+
+    cmp byte [game_over], 0
+    jne clear_cell
+    
+    mov al, [food_row]
+    cmp al, dh
+    jne clear_cell
+    mov al, [food_col]
+    cmp al, dl
+    je skip_clear
+
+clear_cell:
+    mov al, dh
+    mov bl, 80
+    mul bl
+    xor bh, bh
+    mov bl, dl
+    add ax, bx
+    shl ax, 1
+    mov di, ax
+
+    mov word [es:di], 0x0720
+
+skip_clear:
+    inc dl
+    jmp clear_col_loop
+
+next_row:
+    inc dh
+    jmp clear_row_loop
+
+clear_done:
+    popa
     ret
 
 draw_boundary:
@@ -120,6 +170,7 @@ delay:
     push cx
     push dx
     mov cx, 0x0002
+    
 delay_loop:
     mov dx, [speed]
     
@@ -138,7 +189,7 @@ retry:
     mov ah, 0x00
     int 0x1A
     
-    mov bl, byte [es:0500h]
+    mov bl, dh
     xor dl, bl
     
     mov ax, dx
@@ -148,8 +199,10 @@ retry:
     add dl, BOUNDARY_TOP + 4
     mov [food_row], dl
     
-    mov ah, 0x2C
-    int 0x21
+    mov ah, 0x00
+    int 0x1A
+    mov cl, dl
+    
     
     mov al, cl
     mul dl
@@ -175,6 +228,7 @@ no_collision:
     inc si
     loop check_collision
     
+    mov byte [food_eaten], 1
     popa
     ret
 
@@ -395,75 +449,9 @@ speed_msg_loop:
     popa
     ret
 
-display_timer:
-    pusha
-    mov ax, 0xb800
-    mov es, ax
-    
-    mov ah, 0x2C
-    int 0x21
-    
-    cmp cl, [last_second]
-    je timer_done
-    mov [last_second], cl
-    
-    mov di, (0 * 80 + 50) * 2
-    
-    mov al, 'T'
-    mov ah, 0x0E
-    stosw
-    mov al, 'i'
-    stosw
-    mov al, 'm'
-    stosw
-    mov al, 'e'
-    stosw
-    mov al, ':'
-    stosw
-    mov al, ' '
-    stosw
-    
-    mov al, ch
-    call display_2digit
-    
-    mov al, ':'
-    mov ah, 0x0E
-    stosw
-
-    mov al, cl
-    call display_2digit
-    
-timer_done:
-    popa
-    ret
-
-display_2digit:
-
-    push ax
-    push bx
-    push cx
-    
-    mov ah, 0
-    mov bl, 10
-    div bl
-    
-    add al, '0'
-    mov ah, 0x0E
-    stosw
-    
-    mov al, ah
-    add al, '0'
-    stosw
-    
-    pop cx
-    pop bx
-    pop ax
-    ret
-
 show_game_over:
     pusha
-    call clrscr
-    call draw_boundary
+    call clear_play_area
     
     mov ax, 0xb800
     mov es, ax
@@ -530,7 +518,7 @@ paused_loop:
     ret
 
 wait_for_restart:
-    ; Wait for R or ESC key
+    
     mov ah, 00h
     int 16h
     
@@ -538,13 +526,12 @@ wait_for_restart:
     je restart_game
     cmp al, 'R'
     je restart_game
-    cmp ah, 01h  ; ESC scan code
+    cmp ah, 01h
     
     je exit_game
     jmp wait_for_restart
 
 restart_game:
-    ; Reset game state
     mov byte [segment_rows], 10
     mov byte [segment_rows+1], 10
     mov byte [segment_rows+2], 10
@@ -555,9 +542,10 @@ restart_game:
     mov byte [direction], 3
     mov byte [new_direction], 3
     mov word [score], 0
-    mov word [speed], 0xAFFF
+    mov word [speed], 0xBFFF
     mov byte [game_over], 0
     mov byte [paused], 0
+    mov byte [food_eaten], 0
     
     call generate_food
     jmp game_loop
@@ -571,29 +559,24 @@ start:
     call draw_boundary
     call generate_food
 
-    mov ah, 0x2C
-    int 0x21
-    mov [last_second], cl
-
+    jmp game_loop
+    
 game_loop:
     call delay
     
-    ; Check if game over
     cmp byte [game_over], 1
     je near end_game
     
-    ; Check if paused
     cmp byte [paused], 1
     je near paused_state
     
-    ; Check for key press 
     mov ah, 01h
     int 16h
-    jz near no_key
+    jz no_key_pressed
+    
     mov ah, 00h
     int 16h
     
-    ; Check for WASD keys
     cmp al, 'w'
     je up_pressed
     cmp al, 's'
@@ -602,7 +585,10 @@ game_loop:
     je left_pressed
     cmp al, 'd'
     je right_pressed
-    
+    cmp al, 'p'
+    je p_pressed
+    cmp al, 'P'
+    je p_pressed
     cmp ah, 0x48  ; Up arrow
     je up_pressed
     cmp ah, 0x50  ; Down arrow
@@ -612,53 +598,52 @@ game_loop:
     cmp ah, 0x4D  ; Right arrow
     je right_pressed
     
-    cmp al, 'p'
-    je p_pressed
-    cmp al, 'P'
-    je p_pressed
-    
-    jmp no_key
+    jmp no_key_pressed  ; Ignore other keys
 
 up_pressed:
     cmp byte [direction], 1
-    je no_key
+    je no_key_pressed
     mov byte [new_direction], 0
-    jmp no_key
+    jmp no_key_pressed
     
 down_pressed:
     cmp byte [direction], 0
-    je no_key
+    je no_key_pressed
     mov byte [new_direction], 1
-    jmp no_key
+    jmp no_key_pressed
     
 left_pressed:
     cmp byte [direction], 3
-    je no_key
+    je no_key_pressed
     mov byte [new_direction], 2
-    jmp no_key
+    jmp no_key_pressed
     
 right_pressed:
     cmp byte [direction], 2
-    je no_key
+    je no_key_pressed
     mov byte [new_direction], 3
-    jmp no_key
+    jmp no_key_pressed
     
 p_pressed:
     xor byte [paused], 1
-    jmp no_key
+    jmp no_key_pressed
     
-no_key:
+no_key_pressed:
     mov al, [new_direction]
     mov [direction], al
 
-    call clrscr
-    call draw_boundary
+    call clear_play_area
+    
+    cmp byte [food_eaten], 1
+    jne skip_food_draw
+    call draw_food
+    mov byte [food_eaten], 0
+    
+skip_food_draw:
     call update_positions
     call check_collisions
-    call draw_food
     call draw_snake
     call display_score
-    call display_timer
     
     jmp game_loop
 
@@ -671,7 +656,6 @@ paused_state:
     
     mov ah, 00h
     int 16h
-    
     cmp al, 'p'
     je unpause_game
     cmp al, 'P'
@@ -684,6 +668,7 @@ unpause_game:
     jmp game_loop
 
 end_game:
+    call draw_boundary
     call show_game_over
     call wait_for_restart
 
